@@ -47,7 +47,7 @@ permissions:
   contents: write   # GITHUB_TOKEN defaults to read-only; the state commit needs this
 
 env:
-  TENANT_URL: ${{ github.event.inputs.tenant_url_override || 'https://trust.seetrex.com/GATE-G2B-DOES-NOT-EXIST.html' }}
+  TENANT_URL: ${{ github.event.inputs.tenant_url_override || 'https://trust.seetrex.com/seetrex-compliance.html' }}
   ANCHOR_URL: "https://trust.seetrex.com/seetrex-compliance-chain.json"
   LEGACY_ANCHOR_URL: "https://seetrex.com/trust/seetrex-compliance-chain.json"
   LANDING_URL: "https://seetrex.com/"
