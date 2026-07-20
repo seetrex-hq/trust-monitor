@@ -50,7 +50,11 @@ check_c1_http_200() {
 check_c2_headers() {
   local headers="$1" expected="$2" missing="" wrong="" name want got
   while IFS= read -r line; do
+    # Skip blanks AND comments. Without the comment guard the whole header of
+    # the config file was parsed as header names, so C2 reported a wall of
+    # nonsense as "missing headers" on the very first real run.
     [ -z "$line" ] && continue
+    case "$line" in \#*) continue ;; esac
     name=$(printf '%s' "$line" | cut -d: -f1 | tr '[:upper:]' '[:lower:]')
     want=$(printf '%s' "$line" | cut -d: -f2- | sed 's/^ *//')
     got=$(grep -i "^$name:" "$headers" | head -1 | cut -d: -f2- | sed 's/^ *//' | tr -d '\r')

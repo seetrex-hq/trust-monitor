@@ -83,11 +83,28 @@ SECOND_SUM=$(sha256sum "$WORK/chain.json" 2>/dev/null | cut -d' ' -f1)
 run check_c1_http_200 "$WORK/page.hdr"
 
 LANDING_STATUS=$(cat "$WORK/landing.status")
-if [ "$LANDING_STATUS" = "200" ] && grep -qF "trust.seetrex.com" "$WORK/landing.html"; then
-  note "C1b ok: landing 200 and Trust Center link present"
-else
-  note "C1b FAIL: landing status $LANDING_STATUS or Trust Center link missing (the commercial face)"
+if [ "$LANDING_STATUS" != "200" ]; then
+  note "C1b FAIL: landing HTTP $LANDING_STATUS (the commercial face is down)"
   RC=1
+else
+  # The landing is a single-page app: the Trust Center link is built by the
+  # JS bundle and is NOT in the served HTML. Grepping the HTML would have been a
+  # guaranteed false positive — found on the first real run. Follow the bundle
+  # the HTML references, which is also what actually breaks if a future deploy
+  # drops the link.
+  BUNDLE=$(grep -oE 'src="/assets/[^"]+\.js"' "$WORK/landing.html" | head -1 | sed 's/src="//;s/"//')
+  if [ -z "$BUNDLE" ]; then
+    note "C1b FAIL: landing served no JS bundle reference (structure changed)"
+    RC=1
+  else
+    curl -sS --max-time 30 -o "$WORK/bundle.js" "${LANDING_URL%/}$BUNDLE" 2>/dev/null
+    if grep -qF "trust.seetrex.com" "$WORK/bundle.js"; then
+      note "C1b ok: landing 200 and Trust Center link present in bundle"
+    else
+      note "C1b FAIL: Trust Center link absent from the landing bundle (dead end for prospects)"
+      RC=1
+    fi
+  fi
 fi
 
 run check_c2_headers  "$WORK/page.hdr" "$ROOT/config/expected_headers.txt"
