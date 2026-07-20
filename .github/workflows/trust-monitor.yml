@@ -1,0 +1,144 @@
+name: trust-monitor
+
+# External monitor for the Seetrex Compliance Trust Center — layer 1 of two.
+#
+# WHY IT RUNS HERE
+# A monitor that runs next to what it watches shares its fate: whatever takes
+# the service down can take the watchdog and the alert channel with it, and the
+# resulting silence reads exactly like health. This job runs on someone else's
+# computer, on someone else's clock, and alerts through someone else's network,
+# so its verdict is independent of the thing it judges.
+#
+# WHY THERE IS A SECOND LAYER
+# A scheduler-based monitor cannot detect its own silence: if a scheduled run is
+# skipped there is no red run, there is NO run. A third-party dead-man's switch
+# watches THIS job. That is where the "who watches the watcher" recursion is
+# cut — the clock and the duty to alert sit with someone whose failure is
+# independent of ours.
+#
+# INVARIANT — do not change any of these four numbers in isolation:
+#   staleness (90) + interval (30) + tolerated delay (45) <= 180 min
+#   ping period (60) + grace (75)                          <= 180 min
+# They are what makes "a human learns within 3 hours" true. Raising one to
+# "reduce noise" breaks that promise silently.
+#
+# NEVER add `set -x`, `curl -v`, or echo the ping URL: run logs on a public
+# repository are world-readable and that URL is the capability to SILENCE the
+# alarm.
+
+on:
+  schedule:
+    - cron: "20,50 * * * *"   # offset from the publisher and from the internal check
+  workflow_dispatch:
+    inputs:
+      tenant_url_override:
+        description: "Point the checks at a different URL (acceptance test only)"
+        required: false
+
+concurrency:
+  # The job writes and pushes state, and scheduled runs are documented to be
+  # delayed, so two runs can overlap. Without this, a non-fast-forward push
+  # turns the job red for a reason unrelated to what it watches — the noisiest
+  # possible false positive, and false positives are what kill monitoring.
+  group: trust-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # GITHUB_TOKEN defaults to read-only; the state commit needs this
+
+env:
+  TENANT_URL: ${{ github.event.inputs.tenant_url_override || 'https://trust.seetrex.com/seetrex-compliance.html' }}
+  ANCHOR_URL: "https://trust.seetrex.com/seetrex-compliance-chain.json"
+  LEGACY_ANCHOR_URL: "https://seetrex.com/trust/seetrex-compliance-chain.json"
+  LANDING_URL: "https://seetrex.com/"
+  TENANT_SLUG: "seetrex-compliance"
+  SCHEMA_VERSION: "1.0"
+  MAX_STALENESS_MIN: "90"
+  MIN_STALENESS_MIN: "-5"
+  # COUPLING: this must be the version the Trust Center tells auditors to
+  # install, NOT the newest one. Verifying with a different build would mean the
+  # monitor is not checking what the product actually promises.
+  VERIFIER_VERSION: "0.3.0"
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail loudly if the dead-man's switch is not configured
+        env:
+          DEADMAN_PING_URL: ${{ secrets.DEADMAN_PING_URL }}
+        run: |
+          set -euo pipefail
+          # Without the switch, a failure degrades to "a red run nobody looks
+          # at", which is the silent-red failure mode this design exists to end.
+          if [ -z "${DEADMAN_PING_URL:-}" ]; then
+            echo "::error::DEADMAN_PING_URL is not set — layer 2 does not exist and layer 1 alerts nowhere."
+            exit 1
+          fi
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/seetrex-verifier
+          key: verifier-${{ env.VERIFIER_VERSION }}
+
+      - name: Install the published Seetrex verifier
+        run: |
+          set -euo pipefail
+          if [ ! -x "$HOME/.cargo/bin/seetrex-verifier" ]; then
+            cargo install seetrex-verifier --locked --version "$VERIFIER_VERSION"
+          fi
+
+      - name: C0 — canary (every check must still detect its failure mode)
+        env:
+          VERIFIER_BIN: /home/runner/.cargo/bin/seetrex-verifier
+        run: bash bin/canary.sh
+
+      - name: Run the checks
+        env:
+          VERIFIER_BIN: /home/runner/.cargo/bin/seetrex-verifier
+        run: |
+          set -uo pipefail
+          # `created_at` of this run is when it was queued, i.e. the scheduled
+          # moment. Measuring staleness against it keeps platform delay from
+          # contaminating the measurement. monitor.sh falls back to "now" — the
+          # stricter direction — and records the fallback if this fails.
+          GH_RUN_CREATED_AT=$(curl -sS -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            | python3 -c "import json,sys;print(json.load(sys.stdin).get('created_at',''))" 2>/dev/null || echo "")
+          export GH_RUN_CREATED_AT
+          bash bin/monitor.sh
+
+      - name: Commit the observation (append-only witness + activity heartbeat)
+        if: always()
+        run: |
+          set -euo pipefail
+          git config user.name  "trust-monitor"
+          git config user.email "trust-monitor@users.noreply.github.com"
+          git add state/
+          git diff --staged --quiet && { echo "no state change"; exit 0; }
+          git commit -m "observation $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # Push is FAIL-LOUD: a silent failure would lose both the witness and
+          # the repository activity that keeps scheduled workflows enabled.
+          # Rebase-retry first, so an overlapping run is not mistaken for a real
+          # problem.
+          for i in 1 2 3; do
+            git pull --rebase --quiet && git push --quiet && exit 0
+            sleep $((i * 5))
+          done
+          echo "::error::state push failed after retries"
+          exit 1
+
+      - name: Signal failure to the dead-man's switch
+        if: failure()
+        env:
+          DEADMAN_PING_URL: ${{ secrets.DEADMAN_PING_URL }}
+        run: curl -fsS "$DEADMAN_PING_URL/fail" > /dev/null
+
+      - name: Ping success — ONLY on a fully green run
+        if: success()
+        env:
+          DEADMAN_PING_URL: ${{ secrets.DEADMAN_PING_URL }}
+        run: curl -fsS "$DEADMAN_PING_URL" > /dev/null

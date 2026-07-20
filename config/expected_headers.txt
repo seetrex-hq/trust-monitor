@@ -1,0 +1,15 @@
+# Expected security headers (E.6), captured from production 2026-07-20.
+# Format: `header-name: substring that must appear in the value`
+#
+# C2 asserts VALUES, not just presence: a a server-side config repair that rewrites the CSP
+# to something permissive rather than deleting the header would otherwise be
+# invisible. The substring is deliberately the load-bearing part of each value,
+# so cosmetic additions do not cause false positives but weakening does.
+#
+# COUPLING : these live in the web server config, provisioned server-side. A legitimate header change on the host makes this monitor go red
+# permanently unless it is updated in the same window.
+content-security-policy: default-src 'none'
+x-content-type-options: nosniff
+x-frame-options: DENY
+referrer-policy: no-referrer
+permissions-policy: geolocation=()

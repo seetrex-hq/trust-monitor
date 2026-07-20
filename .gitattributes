@@ -1,0 +1,6 @@
+# The runners are Linux and these files are executed, not just read. A CRLF
+# checkout makes bash fail with errors that point nowhere near the real cause,
+# so line endings are pinned rather than left to each contributor's platform.
+* text=auto eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
