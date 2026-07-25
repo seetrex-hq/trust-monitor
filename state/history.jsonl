@@ -25,3 +25,4 @@
 {"observed_at":"2026-07-25T11:48:36Z","ref_source":"scheduled","ordinal":249,"chain_hash":"887aa80e5902eef8a981c745f9af945e24647eba0960cef680c59a179af52427","verdict_count":249,"retried":false,"verdict":"pass"}
 {"observed_at":"2026-07-25T15:45:32Z","ref_source":"scheduled","ordinal":251,"chain_hash":"59c04d61ec39aa5a0a4baf53c52c1ea2b9e155dca1a90b564dd53f3973e09a5e","verdict_count":251,"retried":false,"verdict":"pass"}
 {"observed_at":"2026-07-25T18:43:18Z","ref_source":"scheduled","ordinal":255,"chain_hash":"aca73dbadca5461ac4d92828e5f38d9b1b0bdd47d959f6f5235d0bc6f8c55e0a","verdict_count":255,"retried":false,"verdict":"pass"}
+{"observed_at":"2026-07-25T21:39:58Z","ref_source":"scheduled","ordinal":259,"chain_hash":"2155ccb9cdfd7338022b08c72ff31979d885c13b204e7d510c16f2dfe1d0a39a","verdict_count":259,"retried":false,"verdict":"pass"}
