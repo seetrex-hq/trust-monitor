@@ -28,3 +28,4 @@
 {"observed_at":"2026-07-25T21:39:58Z","ref_source":"scheduled","ordinal":259,"chain_hash":"2155ccb9cdfd7338022b08c72ff31979d885c13b204e7d510c16f2dfe1d0a39a","verdict_count":259,"retried":false,"verdict":"pass"}
 {"observed_at":"2026-07-26T07:45:11Z","ref_source":"scheduled","ordinal":261,"chain_hash":"008f98aaab41406b3b33ff70b9e7af4e9a46c80301644c93bac1ec8923baa633","verdict_count":261,"retried":false,"verdict":"pass"}
 {"observed_at":"2026-07-26T11:17:52Z","ref_source":"scheduled","ordinal":265,"chain_hash":"a07eb0a1cb9eb5b048fff929eae475ac09fb9c5ac1cc66c9d1221a52f8f42b69","verdict_count":265,"retried":false,"verdict":"pass"}
+{"observed_at":"2026-07-26T11:18:57Z","ref_source":"grid-slot","slot_epoch":1785063000,"event":"workflow_dispatch","queue_delay_s":1724,"missed_windows":null,"ordinal":265,"chain_hash":"a07eb0a1cb9eb5b048fff929eae475ac09fb9c5ac1cc66c9d1221a52f8f42b69","verdict_count":265,"retried":false,"verdict":"pass"}
