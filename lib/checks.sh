@@ -77,11 +77,17 @@ check_c2_headers() {
 # publish is stamped in the future, the cron dies, and the delta stays negative
 # FOREVER while every indicator is green.
 #
-# Reference time is the SCHEDULED time, not execution time, so platform delay
-# does not contaminate the measurement.
-# $1 = page file, $2 = reference epoch, $3 = max minutes, $4 = min minutes (negative)
+# STALENESS is measured against the SCHEDULED slot, not execution time, so
+# platform delay does not contaminate the measurement. The FUTURE bound is
+# measured against the WALL CLOCK instead: a page generated after the slot is
+# a normal publish landing mid-window on a delayed run; only a timestamp ahead
+# of NOW indicates a compromised or skewed publisher clock. Coupling both
+# bounds to the slot produced false "clock compromised" reds (2026-07-26
+# review) — false positives are what kill monitoring.
+# $1 = page file, $2 = reference epoch (slot), $3 = max minutes,
+# $4 = min minutes (negative), $5 = wall-clock epoch (defaults to $2)
 check_c3_freshness() {
-  local page="$1" ref_epoch="$2" max_min="$3" min_min="$4" iso page_epoch delta
+  local page="$1" ref_epoch="$2" max_min="$3" min_min="$4" now_epoch="${5:-$2}" iso page_epoch delta future_delta
   iso=$(grep -oE 'generated at <code>[^<]+' "$page" | sed 's/.*<code>//' | head -1)
   if [ -z "$iso" ]; then
     echo "C3 FAIL: generated_at badge not found in page"
@@ -96,8 +102,9 @@ check_c3_freshness() {
     echo "C3 FAIL: page is ${delta}min stale (budget ${max_min}min, measured against scheduled time)"
     return 1
   fi
-  if [ "$delta" -lt "$min_min" ]; then
-    echo "C3 FAIL: generated_at is ${delta}min in the FUTURE (host clock compromised; a published timestamp can never be ahead)"
+  future_delta=$(( (now_epoch - page_epoch) / 60 ))
+  if [ "$future_delta" -lt "$min_min" ]; then
+    echo "C3 FAIL: generated_at is ${future_delta}min in the FUTURE of the wall clock (host clock compromised; a published timestamp can never be ahead)"
     return 1
   fi
   echo "C3 ok: generated_at ${iso} delta=${delta}min"

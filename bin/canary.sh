@@ -96,8 +96,22 @@ printf '{"retried":true}\n%.0s' {1..6} > "$FIX/history_flapping.jsonl"
 expect_fail "C1 (http 200)"          "C1 FAIL" check_c1_http_200      "$FIX/headers_502.txt"
 expect_fail "C2 (header VALUES)"     "C2 FAIL" check_c2_headers       "$FIX/headers_weak_csp.txt" "$FIX/expected_headers.txt"
 expect_fail "C3 upper (stale)"       "C3 FAIL" check_c3_freshness     "$FIX/page_stale.html"   "$NOW" 90 -5
-expect_fail "C3 LOWER (future)"      "FUTURE"  check_c3_freshness     "$FIX/page_future.html"  "$NOW" 90 -5
+expect_fail "C3 LOWER (future)"      "FUTURE"  check_c3_freshness     "$FIX/page_future.html"  "$NOW" 90 -5 "$NOW"
 expect_fail "C3 (badge absent)"      "C3 FAIL" check_c3_freshness     "$FIX/page_nobadge.html" "$NOW" 90 -5
+
+# Regression guard (2026-07-26 review): a publish landing AFTER the slot but
+# before now is a healthy delayed-run scenario, not a compromised clock — the
+# FUTURE bound measures against the wall clock, not the slot. If this pass-case
+# fails, someone re-coupled the lower bound to the slot and every delayed run
+# that meets a fresh publish will go red.
+FRESH=$(date -u -d "@$((NOW - 60))" +%Y-%m-%dT%H:%M:%SZ)
+printf '<p>generated at <code>%s</code></p>\n' "$FRESH" > "$FIX/page_fresh.html"
+if out=$(check_c3_freshness "$FIX/page_fresh.html" "$((NOW - 600))" 90 -5 "$NOW" 2>&1); then
+  echo "canary ok: C3 tolerates publish-after-slot (future bound vs wall clock)"
+else
+  echo "CANARY BROKEN: C3 rejected a publish-after-slot page (lower bound re-coupled to the slot?): $out"
+  FAILED=1
+fi
 expect_fail "C4 (wrong slug)"        "C4 FAIL" check_c4_identity      "$FIX/page_wrongslug.html" "$FIX/chain_ok.json" "seetrex-compliance" "1.0"
 expect_fail "C4 (schema bump)"       "C4 FAIL" check_c4_identity      "$FIX/page_stale.html" "$FIX/chain_badschema.json" "generated" "1.0"
 expect_fail "C5b (rewritten prefix)" "REWRITTEN" check_c5b_append_only "$FIX/chain_rewritten.json" "$FIX/baseline.json"

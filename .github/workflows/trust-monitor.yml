@@ -99,12 +99,18 @@ jobs:
       - name: Run the checks
         env:
           VERIFIER_BIN: /home/runner/.cargo/bin/seetrex-verifier
+          # Recorded per observation: with the external waker in front, this is
+          # what keeps GitHub's native cron reliability honestly measurable
+          # (schedule vs workflow_dispatch) instead of blended.
+          GH_EVENT_NAME: ${{ github.event_name }}
         run: |
           set -uo pipefail
-          # `created_at` of this run is when it was queued, i.e. the scheduled
-          # moment. Measuring staleness against it keeps platform delay from
-          # contaminating the measurement. monitor.sh falls back to "now" — the
-          # stricter direction — and records the fallback if this fails.
+          # `created_at` of this run is when it was QUEUED — on a delayed
+          # scheduler that is NOT the scheduled moment. monitor.sh floors it to
+          # the :20/:50 grid to recover the real slot (that is what keeps
+          # platform delay out of the staleness measurement), and falls back to
+          # "now" — the stricter direction — recording the fallback if this
+          # fetch fails.
           GH_RUN_CREATED_AT=$(curl -sS -H "Authorization: Bearer ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             | python3 -c "import json,sys;print(json.load(sys.stdin).get('created_at',''))" 2>/dev/null || echo "")

@@ -33,19 +33,38 @@ note() { RESULTS="$RESULTS$1"$'\n'; echo "$1"; }
 run()  { local out; out=$("$@" 2>&1); local rc=$?; note "$out"; [ $rc -ne 0 ] && RC=1; return 0; }
 
 # --- reference time: the SCHEDULED slot, not now ------------------------------
-# Platform delay must not contaminate staleness . GitHub's
-# run `created_at` is when the run was queued, i.e. the scheduled moment.
-# Fallback to now is the CONSERVATIVE direction (it can only make us stricter),
-# and it is recorded rather than hidden.
-REF_EPOCH=$(date -u +%s); REF_SOURCE="now-fallback"
+# The grid is :20/:50 — both the native cron and the external waker use it.
+# `created_at` is when the run was QUEUED, and on a delayed scheduler that is
+# NOT the scheduled moment (measured 24 min late on 2026-07-21): labeling it
+# "scheduled" let platform delay contaminate C3 through the back door. The slot
+# is therefore DERIVED: floor created_at to the most recent grid mark. Honest
+# limitation: a MANUAL dispatch off the grid also floors backwards, giving C3's
+# staleness bound up to ~30 min of slack for that run — accepted, because
+# manual dispatches are human-attended acceptance tests, and the grid events
+# (native cron and the waker) land on the marks. Fallback to now is the
+# CONSERVATIVE direction (it can only make staleness stricter), and it is
+# recorded rather than hidden. The FUTURE bound of C3 deliberately does NOT use
+# this slot — see check_c3_freshness.
+EVENT_NAME="${GH_EVENT_NAME:-unknown}"
+NOW_EPOCH=$(date -u +%s)
+REF_EPOCH=$NOW_EPOCH; REF_SOURCE="now-fallback"; QUEUE_DELAY_S=""
 if [ -n "${GH_RUN_CREATED_AT:-}" ]; then
-  if REF_EPOCH=$(date -d "$GH_RUN_CREATED_AT" +%s 2>/dev/null); then
-    REF_SOURCE="scheduled"
-  else
-    REF_EPOCH=$(date -u +%s)
-  fi
+  QUEUED_EPOCH=$(date -d "$GH_RUN_CREATED_AT" +%s 2>/dev/null) || QUEUED_EPOCH=""
+  case "$QUEUED_EPOCH" in
+    ''|*[!0-9]*) : ;;  # unparseable -> keep the recorded fallback
+    *)
+      MIN_PAST_HOUR=$(( (QUEUED_EPOCH / 60) % 60 ))
+      if   [ "$MIN_PAST_HOUR" -ge 50 ]; then OFFSET_MIN=$(( MIN_PAST_HOUR - 50 ))
+      elif [ "$MIN_PAST_HOUR" -ge 20 ]; then OFFSET_MIN=$(( MIN_PAST_HOUR - 20 ))
+      else                                   OFFSET_MIN=$(( MIN_PAST_HOUR + 10 ))  # previous hour's :50
+      fi
+      REF_EPOCH=$(( QUEUED_EPOCH - OFFSET_MIN * 60 - QUEUED_EPOCH % 60 ))
+      REF_SOURCE="grid-slot"
+      QUEUE_DELAY_S=$(( QUEUED_EPOCH - REF_EPOCH ))
+      ;;
+  esac
 fi
-note "reference time: $REF_SOURCE ($(date -u -d "@$REF_EPOCH" +%Y-%m-%dT%H:%M:%SZ))"
+note "reference time: $REF_SOURCE ($(date -u -d "@$REF_EPOCH" +%Y-%m-%dT%H:%M:%SZ)) event=$EVENT_NAME${QUEUE_DELAY_S:+ queue_delay=${QUEUE_DELAY_S}s}"
 
 # --- atomic fetch -------------------------------------------------------------
 # One request per resource; headers and body from the same response. Three
@@ -108,7 +127,7 @@ else
 fi
 
 run check_c2_headers  "$WORK/page.hdr" "$ROOT/config/expected_headers.txt"
-run check_c3_freshness "$WORK/page.html" "$REF_EPOCH" "$MAX_STALENESS_MIN" "$MIN_STALENESS_MIN"
+run check_c3_freshness "$WORK/page.html" "$REF_EPOCH" "$MAX_STALENESS_MIN" "$MIN_STALENESS_MIN" "$NOW_EPOCH"
 run check_c4_identity "$WORK/page.html" "$WORK/chain.json" "$TENANT_SLUG" "$SCHEMA_VERSION"
 
 "$VERIFIER_BIN" verify-chain "$WORK/chain.json" > "$WORK/vout.txt" 2>&1 || true
@@ -143,8 +162,38 @@ t=max(c,key=lambda e:e['ordinal'])
 print(t['ordinal'], t['chain_hash'], len(c))" "$WORK/chain.json" 2>/dev/null)
 read -r TIP_ORD TIP_HASH TIP_COUNT <<< "${TIP:-0 none 0}"
 
-printf '{"observed_at":"%s","ref_source":"%s","ordinal":%s,"chain_hash":"%s","verdict_count":%s,"retried":%s,"verdict":"%s"}\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REF_SOURCE" "${TIP_ORD:-0}" "${TIP_HASH:-none}" \
+# Missed grid windows since the previous observation's slot (grid = 1800 s).
+# This is the honest record of the platform's real cadence (G46-8 input): a
+# skipped window leaves no run and no red — only this counter sees it. `null`
+# when either endpoint lacks a derived slot; never silently 0.
+SLOT_EPOCH_JSON="null"; MISSED="null"
+if [ "$REF_SOURCE" = "grid-slot" ]; then
+  SLOT_EPOCH_JSON="$REF_EPOCH"
+  # `[0-9]*` (zero-or-more) is DELIBERATE: a previous observation recorded with
+  # "slot_epoch":null must still match here (empty numeric part -> cut yields
+  # '' -> MISSED stays null). "Hardening" it to `[0-9]\+` would silently skip
+  # null observations and compute missed_windows over a span the spec defines
+  # as unknowable.
+  PREV_SLOT_EPOCH=$(grep -o '"slot_epoch":[0-9]*' "$HISTORY" 2>/dev/null | tail -1 | cut -d: -f2)
+  case "${PREV_SLOT_EPOCH:-}" in
+    ''|*[!0-9]*) : ;;
+    *)
+      SLOT_DELTA=$(( REF_EPOCH - PREV_SLOT_EPOCH ))
+      if [ "$SLOT_DELTA" -gt 0 ]; then
+        MISSED=$(( SLOT_DELTA / 1800 - 1 ))
+        [ "$MISSED" -lt 0 ] && MISSED=0
+      elif [ "$SLOT_DELTA" -eq 0 ]; then
+        MISSED=0   # same slot twice (overlap/rerun): both endpoints known, nothing skipped
+      else
+        MISSED="null"   # slot went BACKWARDS (time anomaly): unknowable, never a silent 0
+      fi
+      ;;
+  esac
+fi
+
+printf '{"observed_at":"%s","ref_source":"%s","slot_epoch":%s,"event":"%s","queue_delay_s":%s,"missed_windows":%s,"ordinal":%s,"chain_hash":"%s","verdict_count":%s,"retried":%s,"verdict":"%s"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REF_SOURCE" "$SLOT_EPOCH_JSON" "$EVENT_NAME" "${QUEUE_DELAY_S:-null}" "$MISSED" \
+  "${TIP_ORD:-0}" "${TIP_HASH:-none}" \
   "${TIP_COUNT:-0}" "$RETRIED" "$([ $RC -eq 0 ] && echo pass || echo fail)" >> "$HISTORY"
 
 if [ $RC -eq 0 ]; then
