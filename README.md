@@ -42,6 +42,7 @@ failure is independent of both Seetrex and this repository.
 | C7 | Sustained degradation (intermittent errors), by rate rather than by consecutive failures |
 | C8 | The evidence behind the record has not gone stale, even while the page looks fresh |
 | C9 | The TLS certificate is not about to expire |
+| C10 | The public witness bundle is served, fresh, the pinned document, and its audited log never shrinks |
 
 `state/history.jsonl` is an append-only log of every observation. It is committed
 to this repository, so the witness leaves a public, timestamped trail rather than

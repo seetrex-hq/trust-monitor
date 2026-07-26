@@ -49,6 +49,11 @@ permissions:
 env:
   TENANT_URL: ${{ github.event.inputs.tenant_url_override || 'https://trust.seetrex.com/seetrex-compliance.html' }}
   ANCHOR_URL: "https://trust.seetrex.com/seetrex-compliance-chain.json"
+  # The public witness bundle — the only post-gamma surface with no external
+  # witness before C10. COUPLING: BUNDLE_VERSION pins the document contract,
+  # like SCHEMA_VERSION below.
+  BUNDLE_URL: "https://trust.seetrex.com/witness-bundle.json"
+  BUNDLE_VERSION: "seetrex/anchor-monitor/v1"
   LEGACY_ANCHOR_URL: "https://seetrex.com/trust/seetrex-compliance-chain.json"
   LANDING_URL: "https://seetrex.com/"
   TENANT_SLUG: "seetrex-compliance"
@@ -128,10 +133,31 @@ jobs:
           git commit -m "observation $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           # Push is FAIL-LOUD: a silent failure would lose both the witness and
           # the repository activity that keeps scheduled workflows enabled.
-          # Rebase-retry first, so an overlapping run is not mistaken for a real
-          # problem.
+          #
+          # Rebase-retry is NOT enough (proved live, G9 2026-07-26): a queued
+          # overlapping run can check out from a lagging replica that predates
+          # the finishing run's push; both then append to the same line of
+          # history.jsonl and the rebase hits a CONTENT conflict, after which
+          # every further `git pull` dies on the unmerged tree — three loud
+          # retries, all structurally doomed, /fail, and a FALSE POSITIVE on
+          # the dead-man. Recovery must reconcile by CONTENT: reset to the
+          # fresh remote and re-append OUR history line (the append-only
+          # witness record is what must never be lost). The overwrite files
+          # (baseline*.json, disputed.json) deliberately keep the REMOTE
+          # version: the other run is an equally green observer and possibly
+          # newer — re-imposing ours could move a baseline backwards, and the
+          # witness rule is that baselines never go back.
+          MY_LINE=$(tail -n 1 state/history.jsonl)
           for i in 1 2 3; do
             git pull --rebase --quiet && git push --quiet && exit 0
+            git rebase --abort 2>/dev/null || true
+            # A network blip on the fetch must consume a retry, not abort the
+            # remaining ones through set -e.
+            git fetch --quiet origin main || { sleep $((i * 5)); continue; }
+            git reset --hard --quiet origin/main
+            printf '%s\n' "$MY_LINE" >> state/history.jsonl
+            git add state/
+            git commit --quiet -m "observation $(date -u +%Y-%m-%dT%H:%M:%SZ) (reconciled after overlapping run)"
             sleep $((i * 5))
           done
           echo "::error::state push failed after retries"

@@ -92,6 +92,20 @@ printf '<dd>999</dd><span>%s</span>\n' "$(printf 'c%.0s' {1..64})" > "$FIX/page_
 
 printf '{"retried":true}\n%.0s' {1..6} > "$FIX/history_flapping.jsonl"
 
+LM_OK=$(date -u -d "@$NOW" -R)
+LM_OLD=$(date -u -d "@$((NOW - 24000))" -R)   # 400 min: past the 180 min budget
+printf 'HTTP/2 200 \nlast-modified: %s\ncontent-type: application/json\n' "$LM_OK"  > "$FIX/bundle_hdr_ok.txt"
+printf 'HTTP/2 200 \nlast-modified: %s\ncontent-type: application/json\n' "$LM_OLD" > "$FIX/bundle_hdr_old.txt"
+printf 'HTTP/2 200 \ncontent-type: application/json\n'                               > "$FIX/bundle_hdr_nolm.txt"
+printf '{"version":"seetrex/anchor-monitor/v1","c_audit":{"size":100},"leaves":[{"leaf":1}]}\n' > "$FIX/bundle_ok.json"
+printf '{"version":"seetrex/anchor-monitor/v99","c_audit":{"size":100},"leaves":[{"leaf":1}]}\n' > "$FIX/bundle_badversion.json"
+printf '{"version":"seetrex/anchor-monitor/v1","c_audit":{"size":100},"leaves":[]}\n'  > "$FIX/bundle_noleaves.json"
+printf 'this is not json\n'                                                            > "$FIX/bundle_notjson.txt"
+printf '{"c_audit_size":200,"advanced_at":"2026-01-01T00:00:00Z"}\n'                   > "$FIX/bundle_baseline_ahead.json"
+printf 'HTTP/2 200 \nlast-modified: not-a-date\ncontent-type: application/json\n'      > "$FIX/bundle_hdr_badlm.txt"
+printf '{"version":"seetrex/anchor-monitor/v1","c_audit":{},"leaves":[{"leaf":1}]}\n'  > "$FIX/bundle_nosize.json"
+printf '{"c_audit_size":\n'                                                            > "$FIX/bundle_baseline_corrupt.json"
+
 # ---- one expectation per check ----------------------------------------------
 expect_fail "C1 (http 200)"          "C1 FAIL" check_c1_http_200      "$FIX/headers_502.txt"
 expect_fail "C2 (header VALUES)"     "C2 FAIL" check_c2_headers       "$FIX/headers_weak_csp.txt" "$FIX/expected_headers.txt"
@@ -122,6 +136,32 @@ expect_fail "C6 (sustained diff)"    "SUSTAINED" check_c6_legacy_anchor "$FIX/ch
 expect_fail "C7 (flapping)"          "C7 FAIL" check_c7_flapping      "$FIX/history_flapping.jsonl" 6 2
 expect_fail "C8 (evidence rot)"      "C8 FAIL" check_c8_evidence_age  "$FIX/chain_rancid.json" "$NOW" 30
 expect_fail "C9 (cert expiry)"       "C9 FAIL" check_c9_cert_expiry   "$((86400 * 3))" 14
+expect_fail "C10 (http 200)"         "bundle HTTP" check_c10_witness_bundle "$FIX/headers_502.txt"    "$FIX/bundle_ok.json"         "seetrex/anchor-monitor/v1" "$NOW" 180 ""
+expect_fail "C10 (no Last-Modified)" "header absent" check_c10_witness_bundle "$FIX/bundle_hdr_nolm.txt" "$FIX/bundle_ok.json"       "seetrex/anchor-monitor/v1" "$NOW" 180 ""
+expect_fail "C10 (bad Last-Modified)" "Last-Modified unparseable" check_c10_witness_bundle "$FIX/bundle_hdr_badlm.txt" "$FIX/bundle_ok.json" "seetrex/anchor-monitor/v1" "$NOW" 180 ""
+expect_fail "C10 (stale republish)"  "stale"    check_c10_witness_bundle "$FIX/bundle_hdr_old.txt"  "$FIX/bundle_ok.json"         "seetrex/anchor-monitor/v1" "$NOW" 180 ""
+expect_fail "C10 (unparseable json)" "as JSON"  check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt"   "$FIX/bundle_notjson.txt"     "seetrex/anchor-monitor/v1" "$NOW" 180 ""
+expect_fail "C10 (version pin)"      "version"  check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt"   "$FIX/bundle_badversion.json" "seetrex/anchor-monitor/v1" "$NOW" 180 ""
+expect_fail "C10 (size absent)"      "absent or non-numeric" check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt" "$FIX/bundle_nosize.json" "seetrex/anchor-monitor/v1" "$NOW" 180 ""
+expect_fail "C10 (no leaves)"        "leaves"   check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt"   "$FIX/bundle_noleaves.json"   "seetrex/anchor-monitor/v1" "$NOW" 180 ""
+expect_fail "C10 (size rollback)"    "SHRANK"   check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt"   "$FIX/bundle_ok.json"         "seetrex/anchor-monitor/v1" "$NOW" 180 "$FIX/bundle_baseline_ahead.json"
+expect_fail "C10 (corrupt baseline)" "baseline unreadable" check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt" "$FIX/bundle_ok.json" "seetrex/anchor-monitor/v1" "$NOW" 180 "$FIX/bundle_baseline_corrupt.json"
+
+# Pass-guard: a MISSING bundle baseline is bootstrap, and bootstrap must be
+# loud-but-green (C5b's rule). If this fails, someone either made bootstrap a
+# FAIL — the first run after this check ships would go red on a healthy
+# system — or made it silent, which is worse.
+if out=$(check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt" "$FIX/bundle_ok.json" "seetrex/anchor-monitor/v1" "$NOW" 180 "$FIX/does_not_exist.json" 2>&1); then
+  if printf '%s' "$out" | grep -qF "BOOTSTRAP"; then
+    echo "canary ok: C10 bootstrap is loud-but-green"
+  else
+    echo "CANARY BROKEN: C10 bootstrap passed SILENTLY (must say BOOTSTRAP): $out"
+    FAILED=1
+  fi
+else
+  echo "CANARY BROKEN: C10 went red on a missing baseline (bootstrap must adopt, loudly): $out"
+  FAILED=1
+fi
 
 # C5a is exercised against a real broken chain only when the verifier binary is
 # present; the workflow passes it. Skipped locally rather than faked, because a

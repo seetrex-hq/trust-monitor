@@ -273,3 +273,79 @@ check_c9_cert_expiry() {
   fi
   echo "C9 ok: certificate valid for ${days}d"
 }
+
+# --- C10: the public witness bundle --------------------------------------------
+# The bundle is the only post-gamma surface without an external witness: the
+# internal heartbeat shares fate with the host it watches. Structural +
+# anti-rollback only (founder decision 2026-07-26): no crypto re-verification
+# here — that would duplicate the on-host witness; what an EXTERNAL monitor can
+# honestly attest is that the bundle is served, is the expected document, keeps
+# being republished, and never rolls back.
+# Freshness uses Last-Modified against the SCHEDULED slot (same reasoning as
+# C3's upper bound): the pipeline re-copies the bundle hourly at :05, so a
+# fresh mtime proves "the publisher is alive", while the CONTENT advances on
+# the witness's own daily cadence — which is exactly what the size baseline
+# watches instead.
+# $1 = headers file, $2 = body file, $3 = expected version, $4 = reference
+# epoch (slot), $5 = max age minutes, $6 = baseline file ("" if bootstrapping)
+check_c10_witness_bundle() {
+  local headers="$1" body="$2" want_version="$3" ref_epoch="$4" max_min="$5" baseline="$6"
+  local status lastmod lm_epoch age_min
+
+  status=$(head -1 "$headers" | awk '{print $2}')
+  if [ "$status" != "200" ]; then
+    echo "C10 FAIL: bundle HTTP $status (published contract: witness-bundle.json stays 200)"
+    return 1
+  fi
+
+  lastmod=$(grep -i '^last-modified:' "$headers" | head -1 | cut -d: -f2- | sed 's/^ *//' | tr -d '\r')
+  if [ -z "$lastmod" ]; then
+    echo "C10 FAIL: Last-Modified header absent — freshness unmeasurable, and unmeasurable must be loud"
+    return 1
+  fi
+  if ! lm_epoch=$(date -d "$lastmod" +%s 2>/dev/null); then
+    echo "C10 FAIL: Last-Modified unparseable: $lastmod"
+    return 1
+  fi
+  age_min=$(( (ref_epoch - lm_epoch) / 60 ))
+  if [ "$age_min" -gt "$max_min" ]; then
+    echo "C10 FAIL: bundle is ${age_min}min stale (budget ${max_min}min vs the hourly republish — publisher likely dead)"
+    return 1
+  fi
+
+  "$PY" - "$body" "$want_version" "$baseline" "$age_min" <<'PYEOF'
+import json, sys
+try:
+    bundle = json.load(open(sys.argv[1]))
+except Exception as e:
+    print(f"C10 FAIL: bundle unparseable as JSON: {e}"); sys.exit(1)
+got = bundle.get("version", "")
+if got != sys.argv[2]:
+    print(f"C10 FAIL: version '{got}' != expected '{sys.argv[2]}' (COUPLING: see README)"); sys.exit(1)
+size = bundle.get("c_audit", {}).get("size")
+if not isinstance(size, int) or isinstance(size, bool):
+    print("C10 FAIL: c_audit.size absent or non-numeric"); sys.exit(1)
+if not bundle.get("leaves"):
+    print("C10 FAIL: no leaves — a bundle that explains none of our facts witnesses nothing"); sys.exit(1)
+base_path = sys.argv[3]
+try:
+    f = open(base_path)
+except FileNotFoundError:
+    # ONLY a missing file is bootstrap. A baseline that exists but cannot be
+    # read or parsed is C5b's rule: loud red, never silent re-adoption — a
+    # rollback landing in the same window as a corruption/permission break
+    # would otherwise be certified, and a green run would then REWRITE the
+    # baseline over whatever the witness had pinned.
+    print(f"C10 BOOTSTRAP: no bundle baseline; adopting c_audit.size {size} AND SAYING SO (never silently)")
+    sys.exit(0)
+except OSError as e:
+    print(f"C10 FAIL: bundle baseline unreadable ({type(e).__name__}) — refusing to re-adopt over a corrupt witness"); sys.exit(1)
+try:
+    base_size = json.load(f)["c_audit_size"]
+except Exception as e:
+    print(f"C10 FAIL: bundle baseline unreadable ({type(e).__name__}) — refusing to re-adopt over a corrupt witness"); sys.exit(1)
+if size < base_size:
+    print(f"C10 FAIL: c_audit.size SHRANK {base_size} -> {size} — the audited log can only grow"); sys.exit(1)
+print(f"C10 ok: bundle {sys.argv[4]}min old, version pinned, c_audit.size {base_size} -> {size}")
+PYEOF
+}

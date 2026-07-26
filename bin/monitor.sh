@@ -15,7 +15,9 @@ ROOT="$(cd "$HERE/.." && pwd)"
 
 : "${TENANT_URL:?}" ; : "${ANCHOR_URL:?}" ; : "${LEGACY_ANCHOR_URL:?}"
 : "${LANDING_URL:?}" ; : "${TENANT_SLUG:?}" ; : "${SCHEMA_VERSION:?}"
-: "${VERIFIER_BIN:?}"
+: "${VERIFIER_BIN:?}" ; : "${BUNDLE_URL:?}"
+BUNDLE_VERSION="${BUNDLE_VERSION:-seetrex/anchor-monitor/v1}"
+MAX_BUNDLE_AGE_MIN="${MAX_BUNDLE_AGE_MIN:-180}"
 MAX_STALENESS_MIN="${MAX_STALENESS_MIN:-90}"
 MIN_STALENESS_MIN="${MIN_STALENESS_MIN:--5}"
 EVIDENCE_MAX_DAYS="${EVIDENCE_MAX_DAYS:-30}"
@@ -25,6 +27,7 @@ FLAP_THRESHOLD="${FLAP_THRESHOLD:-2}"
 
 STATE="$ROOT/state"; mkdir -p "$STATE"
 HISTORY="$STATE/history.jsonl"; BASELINE="$STATE/baseline.json"
+BUNDLE_BASELINE="$STATE/bundle_baseline.json"
 DISPUTED="$STATE/disputed.json"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 RETRIED=false; RESULTS=""; RC=0
@@ -87,6 +90,7 @@ capture() {
   fetch "$ANCHOR_URL"        "$WORK/chain.json"  "$WORK/chain.hdr"  > /dev/null
   fetch "$LEGACY_ANCHOR_URL?cb=$(date +%s)" "$WORK/legacy.json" "$WORK/legacy.hdr" > "$WORK/legacy.status"
   fetch "$LANDING_URL"       "$WORK/landing.html" "$WORK/landing.hdr" > "$WORK/landing.status"
+  fetch "$BUNDLE_URL"        "$WORK/bundle.json" "$WORK/bundle.hdr" > /dev/null
 }
 
 capture
@@ -140,6 +144,7 @@ run check_c6_legacy_anchor "$WORK/chain.json" "$WORK/legacy.json" "$(cat "$WORK/
 
 run check_c7_flapping "$HISTORY" "$FLAP_WINDOW" "$FLAP_THRESHOLD"
 run check_c8_evidence_age "$WORK/chain.json" "$REF_EPOCH" "$EVIDENCE_MAX_DAYS"
+run check_c10_witness_bundle "$WORK/bundle.hdr" "$WORK/bundle.json" "$BUNDLE_VERSION" "$REF_EPOCH" "$MAX_BUNDLE_AGE_MIN" "$BUNDLE_BASELINE"
 
 CERT_LEFT=$(echo | openssl s_client -connect "$(echo "$TENANT_URL" | awk -F/ '{print $3}'):443" \
   -servername "$(echo "$TENANT_URL" | awk -F/ '{print $3}')" 2>/dev/null \
@@ -201,6 +206,14 @@ if [ $RC -eq 0 ]; then
   # witness would never see a rewrite of anything after it.
   printf '{"ordinal":%s,"chain_hash":"%s","verdict_count":%s,"advanced_at":"%s"}\n' \
     "$TIP_ORD" "$TIP_HASH" "$TIP_COUNT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BASELINE"
+  # Same advance-on-green-only rule for the bundle size: a red run must never
+  # re-baseline, or the rollback witness certifies the rollback. Written only
+  # when the size parsed as a number — never junk into the witness state.
+  BUNDLE_SIZE=$("$PY" -c "import json,sys;s=json.load(open(sys.argv[1])).get('c_audit',{}).get('size');print(s if isinstance(s,int) else '')" "$WORK/bundle.json" 2>/dev/null)
+  case "${BUNDLE_SIZE:-}" in
+    ''|*[!0-9]*) note "bundle baseline NOT advanced (size unparseable on a green run — should be unreachable, C10 gates it)" ;;
+    *) printf '{"c_audit_size":%s,"advanced_at":"%s"}\n' "$BUNDLE_SIZE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BUNDLE_BASELINE" ;;
+  esac
   rm -f "$DISPUTED"
 else
   # NEVER re-baseline on failure. A rewrite changes the state, so "write what we
