@@ -1,0 +1,10 @@
+# Enrollment floor for C11 (F-B.2-c E2-6): every slug listed here must have
+# its ENROLL lane explained in the public witness bundle, and every enroll
+# lane in the bundle must be listed here. DELIBERATE operator pin — the last
+# step of onboarding a tenant (after its irreversible ENROLL in the log) is
+# adding its slug to this file; retiring never happens (no retirement lane
+# shipped), so lines are only ever added.
+# Format: ONE slug per line, full-line # comments only (an inline comment
+# would be parsed as part of the slug and go loudly red).
+seetrex-compliance
+seetrex-trust-center

@@ -147,6 +147,47 @@ expect_fail "C10 (no leaves)"        "leaves"   check_c10_witness_bundle "$FIX/b
 expect_fail "C10 (size rollback)"    "SHRANK"   check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt"   "$FIX/bundle_ok.json"         "seetrex/anchor-monitor/v1" "$NOW" 180 "$FIX/bundle_baseline_ahead.json"
 expect_fail "C10 (corrupt baseline)" "baseline unreadable" check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt" "$FIX/bundle_ok.json" "seetrex/anchor-monitor/v1" "$NOW" 180 "$FIX/bundle_baseline_corrupt.json"
 
+# ---- C11: per-slug enrollment floor ------------------------------------------
+# Fixtures use the REAL lane shape the witness publishes
+# ({"kind":"enroll","mode":"attested","slug":...}); a canary against an
+# invented shape would certify a parser that cannot read the real bundle.
+cat > "$FIX/slugs_two.txt" <<EOF
+# pinned floor (canary fixture)
+seetrex-compliance
+seetrex-trust-center
+EOF
+printf '# only comments, no slugs\n' > "$FIX/slugs_empty.txt"
+printf '{"version":"seetrex/anchor-monitor/v1","c_audit":{"size":100},"leaves":[{"lane":{"kind":"enroll","mode":"attested","slug":"seetrex-compliance"}},{"lane":{"kind":"head","ordinal":1,"slug":"seetrex-compliance"}}]}\n' > "$FIX/bundle_one_enroll.json"
+printf '{"version":"seetrex/anchor-monitor/v1","c_audit":{"size":100},"leaves":[{"lane":{"kind":"enroll","mode":"attested","slug":"seetrex-compliance"}},{"lane":{"kind":"enroll","mode":"attested","slug":"seetrex-trust-center"}},{"lane":{"kind":"enroll","mode":"attested","slug":"zzz-intruder-slug"}}]}\n' > "$FIX/bundle_extra_enroll.json"
+printf '{"version":"seetrex/anchor-monitor/v1","c_audit":{"size":100},"leaves":[{"lane":{"kind":"enroll","mode":"attested","slug":"seetrex-compliance"}},{"lane":{"kind":"enroll","mode":"attested","slug":"seetrex-trust-center"}},{"lane":{"kind":"head","ordinal":1,"slug":"seetrex-trust-center"}}]}\n' > "$FIX/bundle_both_enrolls.json"
+
+printf 'seetrex-compliance\nseetrex-trust-center\nseetrex-compliance\n' > "$FIX/slugs_dup.txt"
+printf '{"version":"seetrex/anchor-monitor/v1","c_audit":{"size":100},"leaves":[{"lane":{"kind":"enroll","mode":"attested","slug":"seetrex-compliance"}},{"lane":{"kind":"enroll","mode":"attested","slug":"seetrex-trust-center"}},{"lane":{"kind":"enroll","mode":"attested"}}]}\n' > "$FIX/bundle_slugless_enroll.json"
+
+expect_fail "C11 (missing enroll)"   "enrollment floor broken" check_c11_enrolled_slugs "$FIX/bundle_one_enroll.json"   "$FIX/slugs_two.txt"
+expect_fail "C11 (unpinned enroll)"  "not pinned"              check_c11_enrolled_slugs "$FIX/bundle_extra_enroll.json" "$FIX/slugs_two.txt"
+expect_fail "C11 (empty pin file)"   "empty floor"             check_c11_enrolled_slugs "$FIX/bundle_ok.json"           "$FIX/slugs_empty.txt"
+expect_fail "C11 (pin file absent)"  "config missing"          check_c11_enrolled_slugs "$FIX/bundle_ok.json"           "$FIX/does_not_exist_slugs.txt"
+expect_fail "C11 (unparseable json)" "as JSON"                 check_c11_enrolled_slugs "$FIX/bundle_notjson.txt"       "$FIX/slugs_two.txt"
+expect_fail "C11 (slugless enroll)"  "missing/empty slug"      check_c11_enrolled_slugs "$FIX/bundle_slugless_enroll.json" "$FIX/slugs_two.txt"
+expect_fail "C11 (duplicate pin)"    "duplicate slug"          check_c11_enrolled_slugs "$FIX/bundle_both_enrolls.json" "$FIX/slugs_dup.txt"
+
+# Pass-guard: a healthy bundle carrying BOTH pinned enrolls (plus heads) must
+# pass. If this fails, someone inverted the floor into always-red — and a
+# monitor that cries wolf on healthy systems gets its alarms deleted (the
+# 2026-07-21..26 alert-fatigue incident is the standing proof).
+if out=$(check_c11_enrolled_slugs "$FIX/bundle_both_enrolls.json" "$FIX/slugs_two.txt" 2>&1); then
+  if printf '%s' "$out" | grep -qF "floor met"; then
+    echo "canary ok: C11 passes a bundle meeting the pinned floor"
+  else
+    echo "CANARY BROKEN: C11 passed but without stating the floor: $out"
+    FAILED=1
+  fi
+else
+  echo "CANARY BROKEN: C11 rejected a healthy bundle that meets the pinned floor: $out"
+  FAILED=1
+fi
+
 # Pass-guard: a MISSING bundle baseline is bootstrap, and bootstrap must be
 # loud-but-green (C5b's rule). If this fails, someone either made bootstrap a
 # FAIL — the first run after this check ships would go red on a healthy

@@ -349,3 +349,75 @@ if size < base_size:
 print(f"C10 ok: bundle {sys.argv[4]}min old, version pinned, c_audit.size {base_size} -> {size}")
 PYEOF
 }
+
+# --- C11: per-slug enrollment floor (F-B.2-c E2-6, 2026-07-26) -----------------
+# Since witness 0.2.0 the bundle explains N tenants, and a SCALAR minimum
+# ("some leaves exist") stops discriminating: a bundle green on dogfood alone
+# looks identical to one green on every onboarded tenant (#84 reviews A-1/B-3).
+# The floor an EXTERNAL monitor can honestly hold: every slug pinned here has
+# its ENROLL lane explained in the bundle. ENROLL only — heads accrue on the
+# tenants' own publishing cadence and a freshly-enrolled tenant with no head
+# yet is healthy, not red (false positives kill monitoring).
+# The pinned list is deliberate operator config, exactly like the version pin:
+# onboarding a tenant ends by ADDING its slug here (COUPLING). An ENROLL in the
+# bundle for a slug NOT pinned is loud too — under OUR submit key it is either
+# config lag after an onboarding or an identity nobody authorized; both must
+# alarm, never blend into green.
+# $1 = bundle body file, $2 = expected-slugs file (one slug per line, # comments)
+check_c11_enrolled_slugs() {
+  local body="$1" expected_file="$2"
+  if [ ! -s "$expected_file" ]; then
+    echo "C11 FAIL: expected-slugs config missing or empty — an empty floor checks nothing, and unmeasurable must be loud"
+    return 1
+  fi
+  "$PY" - "$body" "$expected_file" <<'PYEOF'
+import json, sys
+try:
+    bundle = json.load(open(sys.argv[1]))
+except Exception as e:
+    print(f"C11 FAIL: bundle unparseable as JSON: {e}"); sys.exit(1)
+if not isinstance(bundle, dict):
+    print("C11 FAIL: bundle is valid JSON but not an object — wrong document"); sys.exit(1)
+try:
+    config_lines = open(sys.argv[2]).read().splitlines()
+except OSError as e:
+    # The shell guard catches absent/empty; this catches the existing-but-
+    # unreadable file (permissions, a directory passing -s). Same doctrine:
+    # an unreadable floor checks nothing, and unmeasurable must be loud —
+    # and as a one-line reason, never a traceback (2026-07-26 review).
+    print(f"C11 FAIL: expected-slugs config unreadable ({type(e).__name__}) — an unreadable floor checks nothing, and unmeasurable must be loud"); sys.exit(1)
+expected = []
+for line in config_lines:
+    line = line.strip()
+    if line and not line.startswith("#"):
+        if line in expected:
+            print(f"C11 FAIL: duplicate slug '{line}' in expected_slugs.txt — a fat-fingered pin gets fixed, never counted twice"); sys.exit(1)
+        expected.append(line)
+if not expected:
+    print("C11 FAIL: expected-slugs config missing or empty — an empty floor checks nothing, and unmeasurable must be loud")
+    sys.exit(1)
+leaves = bundle.get("leaves", [])
+if not isinstance(leaves, list):
+    print("C11 FAIL: leaves is not a list — wrong or degenerate bundle shape"); sys.exit(1)
+enrolled = set()
+for leaf in leaves:
+    lane = (leaf.get("lane") if isinstance(leaf, dict) else None) or {}
+    if isinstance(lane, dict) and lane.get("kind") == "enroll":
+        slug = lane.get("slug")
+        if not (isinstance(slug, str) and slug):
+            # A degenerate enroll under OUR submit key is an identity claim
+            # with no name: skipping it silently would certify it as part of
+            # a green bundle (2026-07-26 review, sev 45).
+            print("C11 FAIL: enroll lane with missing/empty slug — a degenerate identity under our submit key must never blend into green"); sys.exit(1)
+        enrolled.add(slug)
+missing = [s for s in expected if s not in enrolled]
+extra = sorted(enrolled - set(expected))
+if missing:
+    print(f"C11 FAIL: enrollment floor broken — pinned slug(s) with NO enroll lane in the bundle: {', '.join(missing)}")
+    sys.exit(1)
+if extra:
+    print(f"C11 FAIL: enroll lane(s) for slug(s) not pinned in expected_slugs.txt: {', '.join(extra)} (COUPLING: onboarding ends by updating the pin; an unauthorized identity under our key must never blend into green)")
+    sys.exit(1)
+print(f"C11 ok: enrollment floor met for {len(expected)} slug(s): {', '.join(expected)}")
+PYEOF
+}

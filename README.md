@@ -43,6 +43,7 @@ failure is independent of both Seetrex and this repository.
 | C8 | The evidence behind the record has not gone stale, even while the page looks fresh |
 | C9 | The TLS certificate is not about to expire |
 | C10 | The public witness bundle is served, fresh, the pinned document, and its audited log never shrinks |
+| C11 | Every tenant slug pinned in `config/expected_slugs.txt` has its ENROLL lane explained in the bundle, and no enroll lane exists for an unpinned slug (per-slug floor, F-B.2-c) |
 
 `state/history.jsonl` is an append-only log of every observation. It is committed
 to this repository, so the witness leaves a public, timestamped trail rather than

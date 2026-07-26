@@ -145,6 +145,7 @@ run check_c6_legacy_anchor "$WORK/chain.json" "$WORK/legacy.json" "$(cat "$WORK/
 run check_c7_flapping "$HISTORY" "$FLAP_WINDOW" "$FLAP_THRESHOLD"
 run check_c8_evidence_age "$WORK/chain.json" "$REF_EPOCH" "$EVIDENCE_MAX_DAYS"
 run check_c10_witness_bundle "$WORK/bundle.hdr" "$WORK/bundle.json" "$BUNDLE_VERSION" "$REF_EPOCH" "$MAX_BUNDLE_AGE_MIN" "$BUNDLE_BASELINE"
+run check_c11_enrolled_slugs "$WORK/bundle.json" "$ROOT/config/expected_slugs.txt"
 
 CERT_LEFT=$(echo | openssl s_client -connect "$(echo "$TENANT_URL" | awk -F/ '{print $3}'):443" \
   -servername "$(echo "$TENANT_URL" | awk -F/ '{print $3}')" 2>/dev/null \
