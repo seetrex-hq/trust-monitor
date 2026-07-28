@@ -234,6 +234,34 @@ else
   FAILED=1
 fi
 
+# ---- call-site arg pins ------------------------------------------------------
+# The FUTURE bound of C3 and C10 measures against the wall clock ONLY because
+# the call site passes $NOW_EPOCH as the last argument: both functions default
+# it to the slot epoch, so DELETING the argument re-couples the bound to the
+# slot silently — the exact regression the 2026-07-26 lesson bought. The
+# fixtures above call the functions themselves and can never see the call
+# site, so the wiring is pinned here.
+MON="$HERE/monitor.sh"
+pin_callsite() {
+  local fn="$1" want_args="$2"
+  local n line argc
+  n=$(grep -cE "^run $fn " "$MON")
+  if [ "$n" -ne 1 ]; then
+    echo "CANARY BROKEN: expected exactly 1 call site for $fn in monitor.sh, found $n"
+    FAILED=1; return
+  fi
+  line=$(grep -E "^run $fn " "$MON")
+  argc=$(printf '%s' "$line" | awk '{print NF - 2}')
+  if [ "$argc" != "$want_args" ] || ! printf '%s' "$line" | grep -q '"\$NOW_EPOCH"$'; then
+    echo "CANARY BROKEN: $fn call site passes $argc args (want $want_args, ending in \"\$NOW_EPOCH\") — its FUTURE bound may have re-coupled to the slot"
+    FAILED=1
+  else
+    echo "canary ok: $fn call site passes $want_args args ending in \$NOW_EPOCH"
+  fi
+}
+pin_callsite check_c3_freshness 5
+pin_callsite check_c10_witness_bundle 8
+
 if [ "$FAILED" -ne 0 ]; then
   echo "CANARY FAILED — the monitor is not trustworthy this run; going red WITHOUT pinging."
   exit 1

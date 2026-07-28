@@ -60,6 +60,12 @@ env:
   SCHEMA_VERSION: "1.0"
   MAX_STALENESS_MIN: "90"
   MIN_STALENESS_MIN: "-5"
+  # C10's freshness budget, pinned here for the same reason C3's is: the
+  # numbers a human checks against the INVARIANT above must be visible where
+  # the invariant is stated, not buried in a script default. Values equal the
+  # monitor.sh defaults — pinning them changes nothing at runtime.
+  MAX_BUNDLE_AGE_MIN: "180"
+  MIN_BUNDLE_AGE_MIN: "-5"
   # COUPLING: this must be the version the Trust Center tells auditors to
   # install, NOT the newest one. Verifying with a different build would mean the
   # monitor is not checking what the product actually promises.
