@@ -286,11 +286,18 @@ check_c9_cert_expiry() {
 # fresh mtime proves "the publisher is alive", while the CONTENT advances on
 # the witness's own daily cadence — which is exactly what the size baseline
 # watches instead.
+# The FUTURE bound mirrors C3's and is measured against the WALL CLOCK, never
+# the slot (coupling it to the slot is what produced C3's false "clock
+# compromised" reds, 2026-07-26 review): an origin clock running ahead plus a
+# dead publisher would defer the staleness detection by exactly the skew,
+# every indicator green meanwhile. A published Last-Modified can never be
+# ahead of now.
 # $1 = headers file, $2 = body file, $3 = expected version, $4 = reference
-# epoch (slot), $5 = max age minutes, $6 = baseline file ("" if bootstrapping)
+# epoch (slot), $5 = max age minutes, $6 = baseline file ("" if bootstrapping),
+# $7 = min minutes (negative), $8 = wall-clock epoch (defaults to $4)
 check_c10_witness_bundle() {
-  local headers="$1" body="$2" want_version="$3" ref_epoch="$4" max_min="$5" baseline="$6"
-  local status lastmod lm_epoch age_min
+  local headers="$1" body="$2" want_version="$3" ref_epoch="$4" max_min="$5" baseline="$6" min_min="${7:--5}" now_epoch="${8:-$4}"
+  local status lastmod lm_epoch age_min future_delta
 
   status=$(head -1 "$headers" | awk '{print $2}')
   if [ "$status" != "200" ]; then
@@ -310,6 +317,11 @@ check_c10_witness_bundle() {
   age_min=$(( (ref_epoch - lm_epoch) / 60 ))
   if [ "$age_min" -gt "$max_min" ]; then
     echo "C10 FAIL: bundle is ${age_min}min stale (budget ${max_min}min vs the hourly republish — publisher likely dead)"
+    return 1
+  fi
+  future_delta=$(( (now_epoch - lm_epoch) / 60 ))
+  if [ "$future_delta" -lt "$min_min" ]; then
+    echo "C10 FAIL: Last-Modified is ${future_delta}min in the FUTURE of the wall clock (origin clock ahead — a published timestamp can never be ahead, and the skew would defer staleness detection by exactly its size)"
     return 1
   fi
 

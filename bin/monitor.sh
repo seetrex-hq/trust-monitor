@@ -18,6 +18,7 @@ ROOT="$(cd "$HERE/.." && pwd)"
 : "${VERIFIER_BIN:?}" ; : "${BUNDLE_URL:?}"
 BUNDLE_VERSION="${BUNDLE_VERSION:-seetrex/anchor-monitor/v1}"
 MAX_BUNDLE_AGE_MIN="${MAX_BUNDLE_AGE_MIN:-180}"
+MIN_BUNDLE_AGE_MIN="${MIN_BUNDLE_AGE_MIN:--5}"
 MAX_STALENESS_MIN="${MAX_STALENESS_MIN:-90}"
 MIN_STALENESS_MIN="${MIN_STALENESS_MIN:--5}"
 EVIDENCE_MAX_DAYS="${EVIDENCE_MAX_DAYS:-30}"
@@ -144,7 +145,7 @@ run check_c6_legacy_anchor "$WORK/chain.json" "$WORK/legacy.json" "$(cat "$WORK/
 
 run check_c7_flapping "$HISTORY" "$FLAP_WINDOW" "$FLAP_THRESHOLD"
 run check_c8_evidence_age "$WORK/chain.json" "$REF_EPOCH" "$EVIDENCE_MAX_DAYS"
-run check_c10_witness_bundle "$WORK/bundle.hdr" "$WORK/bundle.json" "$BUNDLE_VERSION" "$REF_EPOCH" "$MAX_BUNDLE_AGE_MIN" "$BUNDLE_BASELINE"
+run check_c10_witness_bundle "$WORK/bundle.hdr" "$WORK/bundle.json" "$BUNDLE_VERSION" "$REF_EPOCH" "$MAX_BUNDLE_AGE_MIN" "$BUNDLE_BASELINE" "$MIN_BUNDLE_AGE_MIN" "$NOW_EPOCH"
 run check_c11_enrolled_slugs "$WORK/bundle.json" "$ROOT/config/expected_slugs.txt"
 
 CERT_LEFT=$(echo | openssl s_client -connect "$(echo "$TENANT_URL" | awk -F/ '{print $3}'):443" \

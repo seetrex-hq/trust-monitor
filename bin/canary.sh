@@ -94,8 +94,10 @@ printf '{"retried":true}\n%.0s' {1..6} > "$FIX/history_flapping.jsonl"
 
 LM_OK=$(date -u -d "@$NOW" -R)
 LM_OLD=$(date -u -d "@$((NOW - 24000))" -R)   # 400 min: past the 180 min budget
+LM_FUTURE=$(date -u -d "@$((NOW + 3600))" -R) # 60 min ahead: past the -5 min wall-clock bound
 printf 'HTTP/2 200 \nlast-modified: %s\ncontent-type: application/json\n' "$LM_OK"  > "$FIX/bundle_hdr_ok.txt"
 printf 'HTTP/2 200 \nlast-modified: %s\ncontent-type: application/json\n' "$LM_OLD" > "$FIX/bundle_hdr_old.txt"
+printf 'HTTP/2 200 \nlast-modified: %s\ncontent-type: application/json\n' "$LM_FUTURE" > "$FIX/bundle_hdr_future.txt"
 printf 'HTTP/2 200 \ncontent-type: application/json\n'                               > "$FIX/bundle_hdr_nolm.txt"
 printf '{"version":"seetrex/anchor-monitor/v1","c_audit":{"size":100},"leaves":[{"leaf":1}]}\n' > "$FIX/bundle_ok.json"
 printf '{"version":"seetrex/anchor-monitor/v99","c_audit":{"size":100},"leaves":[{"leaf":1}]}\n' > "$FIX/bundle_badversion.json"
@@ -140,6 +142,19 @@ expect_fail "C10 (http 200)"         "bundle HTTP" check_c10_witness_bundle "$FI
 expect_fail "C10 (no Last-Modified)" "header absent" check_c10_witness_bundle "$FIX/bundle_hdr_nolm.txt" "$FIX/bundle_ok.json"       "seetrex/anchor-monitor/v1" "$NOW" 180 ""
 expect_fail "C10 (bad Last-Modified)" "Last-Modified unparseable" check_c10_witness_bundle "$FIX/bundle_hdr_badlm.txt" "$FIX/bundle_ok.json" "seetrex/anchor-monitor/v1" "$NOW" 180 ""
 expect_fail "C10 (stale republish)"  "stale"    check_c10_witness_bundle "$FIX/bundle_hdr_old.txt"  "$FIX/bundle_ok.json"         "seetrex/anchor-monitor/v1" "$NOW" 180 ""
+expect_fail "C10 (future Last-Modified)" "FUTURE" check_c10_witness_bundle "$FIX/bundle_hdr_future.txt" "$FIX/bundle_ok.json"      "seetrex/anchor-monitor/v1" "$NOW" 180 "" -5 "$NOW"
+
+# Regression guard (mirror of C3's, same 2026-07-26 lesson): a republish
+# landing AFTER the slot but before now is a healthy delayed-run scenario, not
+# a compromised clock — C10's FUTURE bound measures against the wall clock,
+# not the slot. If this pass-case fails, someone re-coupled it to the slot and
+# every delayed run that meets the hourly republish will go red.
+if out=$(check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt" "$FIX/bundle_ok.json" "seetrex/anchor-monitor/v1" "$((NOW - 600))" 180 "" -5 "$NOW" 2>&1); then
+  echo "canary ok: C10 tolerates republish-after-slot (future bound vs wall clock)"
+else
+  echo "CANARY BROKEN: C10 rejected a republish-after-slot bundle (future bound re-coupled to the slot?): $out"
+  FAILED=1
+fi
 expect_fail "C10 (unparseable json)" "as JSON"  check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt"   "$FIX/bundle_notjson.txt"     "seetrex/anchor-monitor/v1" "$NOW" 180 ""
 expect_fail "C10 (version pin)"      "version"  check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt"   "$FIX/bundle_badversion.json" "seetrex/anchor-monitor/v1" "$NOW" 180 ""
 expect_fail "C10 (size absent)"      "absent or non-numeric" check_c10_witness_bundle "$FIX/bundle_hdr_ok.txt" "$FIX/bundle_nosize.json" "seetrex/anchor-monitor/v1" "$NOW" 180 ""
