@@ -1,1 +1,1 @@
-{"disputed_at":"2026-08-01T05:21:16Z","observed_ordinal":357,"observed_hash":"9b1bd209fbfb3b2033f4b9ac9815245e0505001f3a71309dace0f45353a41395","c6_divergent":false,"reasons":["C3 FAIL: page is 134min stale (budget 90min, measured against scheduled time)"]}
+{"disputed_at":"2026-08-01T05:51:50Z","observed_ordinal":357,"observed_hash":"9b1bd209fbfb3b2033f4b9ac9815245e0505001f3a71309dace0f45353a41395","c6_divergent":false,"reasons":["C3 FAIL: page is 164min stale (budget 90min, measured against scheduled time)"]}
