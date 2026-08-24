@@ -6,5 +6,12 @@
 # shipped), so lines are only ever added.
 # Format: ONE slug per line, full-line # comments only (an inline comment
 # would be parsed as part of the slug and go loudly red).
+#
+# EXCEPTION, 2026-08-24 (the one time a line was REMOVED): the vendor reset
+# the chain genesis on 2026-08-24 (documented in the auditor kit revision
+# 2026-08-24-genesis-reset, tag seetrex-kit-2026-08-24-genesis-reset of the
+# public verifier repository). The new witness bundle carries ENROLL lanes
+# only for the tenants re-enrolled under the new genesis; the test tenant
+# seetrex-trust-center was retired in that reset and never re-enrolled, so
+# its line leaves this floor with the reset, not silently.
 seetrex-compliance
-seetrex-trust-center
