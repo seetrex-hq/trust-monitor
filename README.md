@@ -76,7 +76,7 @@ ping period (60 min) + grace (75 min)                             <= 3 h
 ## Running it locally
 
 ```sh
-cargo install seetrex-verifier --locked --version 0.3.0
+cargo install seetrex-verifier --locked --version 0.3.7
 VERIFIER_BIN="$HOME/.cargo/bin/seetrex-verifier" bash bin/canary.sh
 ```
 

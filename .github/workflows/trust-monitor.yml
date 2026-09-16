@@ -69,7 +69,7 @@ env:
   # COUPLING: this must be the version the Trust Center tells auditors to
   # install, NOT the newest one. Verifying with a different build would mean the
   # monitor is not checking what the product actually promises.
-  VERIFIER_VERSION: "0.3.0"
+  VERIFIER_VERSION: "0.3.7"
 
 jobs:
   monitor:
